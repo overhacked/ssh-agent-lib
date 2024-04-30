@@ -2,6 +2,7 @@
 
 use core::str::FromStr;
 
+use secrecy::{ExposeSecret as _, SecretString};
 use ssh_encoding::{CheckedSum, Decode, Encode, Error as EncodingError, Reader, Writer};
 use ssh_key::{
     certificate::Certificate, private::KeypairData, public::KeyData, Algorithm, Error, Signature,
@@ -349,7 +350,7 @@ impl Encode for RemoveIdentity {
 /// This structure is sent in a [`Request::AddSmartcardKey`] (`SSH_AGENTC_ADD_SMARTCARD_KEY`) message.
 ///
 /// Described in [draft-miller-ssh-agent-14 § 3.2](https://www.ietf.org/archive/id/draft-miller-ssh-agent-14.html#section-3.2)
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, Debug)]
 pub struct SmartcardKey {
     /// An opaque identifier for the hardware token
     ///
@@ -358,7 +359,7 @@ pub struct SmartcardKey {
     pub id: String,
 
     /// An optional password to unlock the key
-    pub pin: String,
+    pub pin: SecretString,
 }
 
 impl Decode for SmartcardKey {
@@ -366,7 +367,7 @@ impl Decode for SmartcardKey {
 
     fn decode(reader: &mut impl Reader) -> Result<Self> {
         let id = String::decode(reader)?;
-        let pin = String::decode(reader)?;
+        let pin = String::decode(reader)?.into();
 
         Ok(Self { id, pin })
     }
@@ -374,14 +375,24 @@ impl Decode for SmartcardKey {
 
 impl Encode for SmartcardKey {
     fn encoded_len(&self) -> ssh_encoding::Result<usize> {
-        [self.id.encoded_len()?, self.pin.encoded_len()?].checked_sum()
+        [
+            self.id.encoded_len()?,
+            self.pin.expose_secret().encoded_len()?,
+        ]
+        .checked_sum()
     }
 
     fn encode(&self, writer: &mut impl Writer) -> ssh_encoding::Result<()> {
         self.id.encode(writer)?;
-        self.pin.encode(writer)?;
+        self.pin.expose_secret().encode(writer)?;
 
         Ok(())
+    }
+}
+
+impl PartialEq for SmartcardKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.pin.expose_secret() == other.pin.expose_secret()
     }
 }
 
